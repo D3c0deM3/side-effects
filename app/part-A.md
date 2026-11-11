@@ -1,8 +1,8 @@
-# Mobile application development - Side-effects
+# Mobile Application Development – Side Effects
 ## Part A
 ### Question 1
-A side-effect is a change in the app state that happens outside of the composable function scope. Composable functions should be side-effect free because of unpredictable recompositions or recompositions that can be discarded.
-An effect is a composable function that doesn't emit UI and causes side effects to run when a composition completes. Data loading belongs to ViewModel to keep unidirectional data flow intact.
+A side effect is any change to the state of the app, or any interaction with the outside world, that happens beyond the scope of a composable function. Composables should be free of side effects, because they can be re-run unpredictably, and some recomposition attempts get thrown away.
+An effect is a composable that emits no UI; it schedules side effects to run once a composition completes successfully. Loading data belongs in the ViewModel, which keeps the unidirectional data flow intact.
 ### Question 2
 |I want to | API |
 |--|--|
@@ -15,64 +15,65 @@ An effect is a composable function that doesn't emit UI and causes side effects 
 | recompose less often than the input changes | derivedStateOf |
 | turn Compose State into a Flow | snapshotFlow |
 ### Question 3
-(1) Effect starts when enters composition.
-(2) When key changes LaunchedEffect will stop previous coroutine and start new one with new keys.
-(3) isActive check is coroutine active or not, if it is not while loop stops.
-In lecture's MiniComposition model shows what would be when key changes.
+1. The effect starts as soon as it enters the Composition.
+2. When a key changes, LaunchedEffect cancels the running coroutine and starts a fresh one using the new key.
+3. `isActive` tells us whether the coroutine is still active. Once it turns false, the while loop ends.
+
+The lecture's MiniComposition model illustrates what happens when a key changes.
 ### Question 4
-LaunchedEffect(true) means its key never changes and it will always sendHello with the same userId, even when user changes. It is okay, if we want to have an effect that shouldn't be changed across the lifecycle of the composable.
+With `LaunchedEffect(true)` the key never changes, so the effect never restarts and keeps calling sendHello with the original userId, even after the user changes. That is acceptable only when the work should run once for the whole lifetime of the composable and must not be restarted.
 
     LaunchedEffect(userId) {
-		api.sendHello(userId)
-	}
+        api.sendHello(userId)
+    }
 ### Question 5
-As LaunchedEffect is composable it should be called inside of composable and lambda is not composable. rememberCoroutineScope creates coroutine and it will be tied to composable's lifecycle
+LaunchedEffect is itself a composable, so it can only be called from other composable code, and an onClick lambda is not composable. rememberCoroutineScope gives us a coroutine scope that is tied to the composable's lifecycle.
 
     val scope = rememberCoroutineScope()
     ...
     Button(
-	    onclick = {
-		    scope.launch {
-			    snackbarHostState.showSnackbar("Hi")
-		    }
-	    }
-	)
-For the **“work that starts because the composable appeared”** I would choose LaunchedEffect and for **“work that starts because the user did something”** I would choose rememberCoroutineScope.
+        onClick = {
+            scope.launch {
+                snackbarHostState.showSnackbar("Hi")
+            }
+        }
+    )
+For **work that starts because the composable appeared**, I would pick LaunchedEffect; for **work that starts because the user did something**, I would pick rememberCoroutineScope.
 ### Question 6
-As in this code currentOnTimeout is rememberUpdatedState(onTimeout) it will save the state of the captured lambda and as LaunchedEffect is used with true as a key when new state of onTimeout appears previous state will continue till it finishes. If we gave onTimeout as a key to LaunchedEffect it would destroy previous coroutine and start new one each time. Model output shows how captured works and proves that captured state won't change.
+Here `currentOnTimeout` is created with `rememberUpdatedState(onTimeout)`, so it always holds the most recent lambda. Since LaunchedEffect uses `true` as its key, the effect is not restarted when a new lambda arrives; the waiting continues, and when it ends the latest lambda is the one that gets called. If we made onTimeout the key instead, every new lambda would cancel the running coroutine and start it over, so the timer would keep resetting. The model's output shows what a plain captured lambda does: it keeps the old value and never sees the update.
 ### Question 7
-DisposableEffect should have onDispose at the end, where we write cleanup code, otherwise IDE will display build-time error. If we don't have anything to clean up LaunchedEffect or SideEffect-s are better choice. But in code example for this task we need cleanup to remove LifeCycleEventObserver:
+DisposableEffect must end with an onDispose block that holds the cleanup code; without it the build fails. If there is nothing to clean up, LaunchedEffect or SideEffect is the better fit. In this example, though, cleanup is needed to remove the LifecycleEventObserver:
 
     DisposableEffect(lifecycleOwner) {
-	    val observer = LifecycleEventObserver{_, event -> /*...*/}
-	    lifecycleOwner.lifecycle.addObserver(observer)
-	    onDispose {
-		    lifecycleOwner.lifecycle.removeObserver(observer)
-		}
-	}
+        val observer = LifecycleEventObserver { _, event -> /*...*/ }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 ### Question 8
 
     A.addObserver(observer)
     A.removeObserver(observer)
     B.addObserver(observer)
     B.removeObserver(observer)
-First it adds observer with owner A, then in second call it doesn't run anything because key is not changed. When owner changed to B, first onDispose of observer with owner A runs then B is added. At the end when comp.leave() runs onDispose of observer with owner A runs.
+The observer is first added to owner A. The second call prints nothing, because the key did not change. When the owner switches to B, the onDispose for A runs first, and then the observer is added to B. Finally, when comp.leave() is called, the onDispose for the observer on owner B runs.
 ### Question 9
-SideEffect runs after every successful recomposition, so only after the composition is committed. If we write the call directly in the composable body, it runs during the composition attempt. The attempt can be discarded, but the call to the analytics library has already happened, so the library gets a value from a composition that never was used.
+SideEffect runs after every successful recomposition, meaning only once the composition has been committed. A call placed directly in the composable body runs during the composition attempt. If that attempt is later discarded, the analytics call has already been made, so the library ends up with a value from a composition that was never used.
 
     SideEffect {
-	    analytics.setUserProperty("userType", user.userType)
-	}
+        analytics.setUserProperty("userType", user.userType)
+    }
 In the lecture's attempt model:
-- Attempt 1 (direct call, commits=false) - analytics is called, even if the attempt is discarded. This is wrong.
-- Attempt 2 (SideEffect, commits=false) - analytics is not called, because SideEffect is only pending and never commits.
-- Attempt 3 (SideEffect, commits=true) - analytics is called once, after the commit.
+- Attempt 1 (direct call, commits=false): analytics is called even though the attempt is discarded. This is wrong.
+- Attempt 2 (SideEffect, commits=false): analytics is not called, since the SideEffect stays pending and never commits.
+- Attempt 3 (SideEffect, commits=true): analytics is called once, right after the commit.
 
-SideEffect does not take keys. It runs after every successful recomposition, so the value is always up to date. Because of this it must be cheap, no heavy work and no suspend calls.
+SideEffect takes no keys. It runs after each successful recomposition, so the value is always current. For that reason it has to be cheap: no heavy work and no suspend calls.
 ### Question 10
-produceState launches a coroutine scoped to the Composition that can push values into a returned State. It is used to convert non-Compose state (Flow, LiveData, RxJava) to Compose state. Producer is launched when produceState enters the Composition and it is cancelled when it leaves the Composition. If keys (url, imageRepository) change, the running producer is cancelled and launched again with new inputs.
-The returned State conflates, it means setting the same value doesn't trigger recomposition. In the lecture's model `state.value = state.value` changes nothing, so a.png and b.txt both have only 1 recomposition (Loading to Success or Loading to Error).
-loadNetworkImage starts with a lowercase letter because composables that return a value should be named like normal Kotlin functions.
+produceState starts a coroutine scoped to the Composition and lets it push values into a State it returns. It is used to turn non-Compose sources (Flow, LiveData, RxJava) into Compose state. The producer starts when produceState enters the Composition and is cancelled when it leaves. If a key (url, imageRepository) changes, the running producer is cancelled and launched again with the new inputs.
+The returned State is conflated, so assigning the same value again does not trigger a recomposition. In the lecture's model, `state.value = state.value` does nothing, which is why a.png and b.txt each recompose only once (Loading to Success, or Loading to Error).
+loadNetworkImage begins with a lowercase letter because a composable that returns a value is named like an ordinary Kotlin function.
 
     @Composable
     fun loadNetworkImage(
@@ -89,7 +90,7 @@ loadNetworkImage starts with a lowercase letter because composables that return 
         }
     }
 ### Question 11
-produceState is not magic, under the hood it holds a result variable with remember { mutableStateOf(initialValue) } and runs the producer in a LaunchedEffect. Whenever value is updated in the producer, the result state is updated.
+There is no magic in produceState. Internally it keeps a result variable created with `remember { mutableStateOf(initialValue) }` and runs the producer inside a LaunchedEffect. Each time the producer sets value, the result state is updated.
 
     @Composable
     fun <T> myProduceState(
@@ -103,57 +104,57 @@ produceState is not magic, under the hood it holds a result variable with rememb
         }
         return result
     }
-It behaves like LaunchedEffect because it is built on top of it: the producer starts when it enters the Composition and is cancelled when it leaves. When the key changes, the old coroutine is cancelled and the producer is launched again in a new coroutine. The remembered state keeps the last value.
+It behaves like LaunchedEffect because it is built on top of it: the producer starts when it enters the Composition and is cancelled when it leaves. If the key changes, the old coroutine is cancelled and the producer runs again in a new one. The remembered state holds on to the last value in the meantime.
 ### Question 12
-If we read listState.firstVisibleItemIndex directly, the composable recomposes every time the index changes (0, 1, 2, 3...), but we need the UI to change only when the index is greater than 0. This is the mismatch of update frequency. derivedStateOf creates a new state that only updates when the result (Boolean) changes, it works like distinctUntilChanged. It is wrapped in remember so the derived state is not created again on every recomposition and it keeps its state.
+Reading listState.firstVisibleItemIndex directly makes the composable recompose every time the index changes (0, 1, 2, 3...), even though the UI only needs to change once the index goes above 0. This is a mismatch in update frequency. derivedStateOf produces a state that updates only when its result (a Boolean) changes, much like distinctUntilChanged. It is wrapped in remember so that the derived state is not recreated on each recomposition and keeps its value.
 
     val showButton by remember {
         derivedStateOf { listState.firstVisibleItemIndex > 0 }
     }
-Calculation for indexes [0, 0, 1, 2, 3, 4, 5, 3, 1, 0]:
-- Direct read: it recomposes when index is different from previous one. 0 (first, prev = -1) 1, 0 same, 1 (2), 2 (3), 3 (4), 4 (5), 5 (6), 3 (7), 1 (8), 0 (9). So 9 recompositions.
-- derivedStateOf: show = index > 0 gives false, false, true, true, true, true, true, true, true, false. It changes: false (first, 1), true (2), false (3). So 3 recompositions.
+Counting for the indexes [0, 0, 1, 2, 3, 4, 5, 3, 1, 0]:
+- Direct read: a recomposition happens whenever the index differs from the previous one. 0 (first, prev = -1) counts as 1, the second 0 is unchanged, then 1 (2), 2 (3), 3 (4), 4 (5), 5 (6), 3 (7), 1 (8), 0 (9). That gives 9 recompositions.
+- derivedStateOf: show = index > 0 produces false, false, true, true, true, true, true, true, true, false. The value changes at false (first, 1), true (2) and false (3), giving 3 recompositions.
 ### Question 13
-In this code fullName needs to update as often as firstName and lastName, so no excess recomposition happens and derivedStateOf is pure overhead (it is expensive). Correct version:
+Here fullName has to be updated exactly as often as firstName and lastName, so there is no extra recomposition to avoid, and derivedStateOf is just overhead (it is not cheap). The correct version:
 
     val fullNameCorrect = "$firstName $lastName"
-The criterion: use derivedStateOf only when the inputs change more often than the result and we want to avoid unnecessary recomposition (like scroll position and threshold). If the result changes as often as the inputs, we don't need it.
-Caution from the lecture: derivedStateOf is expensive, so use it only to avoid unnecessary recomposition when the result hasn't changed.
+The rule of thumb: use derivedStateOf only when the inputs change more often than the result and we want to skip pointless recompositions (as with a scroll position and a threshold). If the result changes as often as the inputs, it is not needed.
+The lecture also warns that derivedStateOf is costly, so it should be reserved for cases where it prevents recompositions that would produce an unchanged result.
 ### Question 14
-We use derivedStateOf when the waveform depends on another state, but we don't want recompositions every time that base state changes, only when the derived value changes.
-We don't use it in these cases:
-1. Amplitudes are already precomputed (from ViewModel or repository) - there is nothing to derive, so derivedStateOf only adds overhead.
-2. The waveform is static and doesn't depend on fast-updating states (like playback position every frame) - the input doesn't change often, so there is no extra recomposition to reduce.
-3. The waveform is updated manually with LaunchedEffect or animate* APIs - the updates are already controlled by those APIs, derivedStateOf is not needed.
+derivedStateOf makes sense when the waveform depends on some other state, but we do not want to recompose each time that base state changes, only when the derived value does.
+It is not needed in these cases:
+1. The amplitudes are already precomputed (in the ViewModel or repository). There is nothing to derive, so derivedStateOf would only add overhead.
+2. The waveform is static and does not depend on rapidly changing state (such as a playback position updated every frame). The input rarely changes, so there are no extra recompositions to cut.
+3. The waveform is updated manually via LaunchedEffect or animate* APIs. Those APIs already control the updates, so derivedStateOf adds nothing.
 ### Question 15
-snapshotFlow converts State objects into a cold Flow. It is cold because its block runs only when it is collected, and it emits the result of State objects read inside the block. When one of the states changes, the Flow emits the new value only if it is not equal to the previous emitted value (like distinctUntilChanged).
-- map - turns the index into Boolean (index > 0).
-- distinctUntilChanged - drops repeated values, passes only when the Boolean changes.
-- filter - keeps only true, so only passing the first item sends an event.
+snapshotFlow turns State objects into a cold Flow. It is cold because its block runs only when someone collects it, and it emits whatever the State objects read inside the block evaluate to. When one of those states changes, the Flow emits the new value only if it differs from the last emitted one (similar to distinctUntilChanged).
+- map: converts the index into a Boolean (index > 0).
+- distinctUntilChanged: drops repeated values, so only changes in the Boolean get through.
+- filter: keeps only true, so an event fires only when the user moves past the first item.
 
-collect is inside LaunchedEffect because collect is a suspend function and it needs a coroutine. Also the collecting is cancelled together with the effect when it leaves the Composition (and restarts if listState changes).
+collect is called inside LaunchedEffect because it is a suspend function and needs a coroutine. In addition, the collection is cancelled together with the effect when it leaves the Composition (and restarts if listState changes).
 
-Stream 0, 0, 1, 2, 5, 3, 0, 0, 1, 4:
+For the stream 0, 0, 1, 2, 5, 3, 0, 0, 1, 4:
 1. map: false, false, true, true, true, true, false, false, true, true
 2. distinctUntilChanged: false, true, false, true
 3. filter (true only): true, true
 
-So 2 events are sent, one each time the user crosses the first item downwards.
+So 2 events are sent, one each time the user scrolls past the first item.
 ### Question 16
 | Keys | Restarts (prediction) | Why |
 |--|--|--|
-| keys = [] | 1 | Keys never change, so it runs only once at start. After owner B arrives it still uses A. |
-| keys = [owner] | 2 | Restarts exactly when owner changes (A at start, B at tick 3). |
-| keys = [owner, tick] | 4 | tick changes every time (1 to 4), so it restarts on every tick. |
+| keys = [] | 1 | The keys never change, so the effect runs only once at the start. Even after owner B arrives, it still uses A. |
+| keys = [owner] | 2 | It restarts exactly when the owner changes (A at the start, B at tick 3). |
+| keys = [owner, tick] | 4 | tick changes every time (1 to 4), so the effect restarts on every tick. |
 
-keys = [] is wrong, it works with a stale value (restarting less than it should causes bugs). keys = [owner] is right. keys = [owner, tick] is inefficient (restarting more than it should). Output of the lecture's model:
+keys = [] is wrong: it works with a stale value (restarting less than needed causes bugs). keys = [owner] is correct. keys = [owner, tick] is inefficient (restarting more than needed). The output of the lecture's model:
 
     keys = []            restarts: 1
     keys = [owner]       restarts: 2
     keys = [owner, tick] restarts: 4
 ### Question 17
-lifecycleOwner must be a key of DisposableEffect, because when it changes the old observer must be removed and a new one added to the new owner. currentOnStart and currentOnStop are not keys, because they are made with rememberUpdatedState and their State never changes in Composition, they always give the latest lambda without restarting the effect.
-If lifecycleOwner is not a key and it changes, HomeScreen recomposes, but DisposableEffect isn't disposed and restarted. The observer stays on the old owner and the wrong lifecycleOwner is used from that point onward.
+lifecycleOwner has to be a key of DisposableEffect, because when it changes the old observer must be removed and a new one attached to the new owner. currentOnStart and currentOnStop are not keys: they come from rememberUpdatedState, so their State object never changes in the Composition, and they always provide the latest lambda without restarting the effect.
+If lifecycleOwner is not a key and it changes, HomeScreen recomposes but the DisposableEffect is neither disposed nor restarted. The observer stays attached to the old owner, and from then on the wrong lifecycleOwner is in use.
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -165,13 +166,13 @@ If lifecycleOwner is not a key and it changes, HomeScreen recomposes, but Dispos
             lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
-Key Point: variables used in an effect should be added as a parameter of the effect composable, or use rememberUpdatedState.
+Key point: any variable used inside an effect should be passed as a parameter of the effect, or be wrapped with rememberUpdatedState.
 ### Question 18
 Bugs:
-1. `viewModel.markOpened(userId)` is called directly in the composable body. It is a side-effect, it runs on every recomposition, even discarded ones. It should be inside an effect with userId as a key: LaunchedEffect(userId).
-2. `LaunchedEffect(true) { delay(5_000); onClose() }` uses onClose which can change, so it can call a stale lambda. If we make onClose a key, the delay starts over on every new lambda. We should use rememberUpdatedState(onClose).
-3. DisposableEffect has no onDispose, so it doesn't compile and the observer is never removed (leak). onDispose must be the last statement with removeObserver.
-4. LaunchedEffect is called inside onClick. It is a composable function and cannot be called from callback. We should use scope.launch with rememberCoroutineScope (and send() is suspend).
+1. `viewModel.markOpened(userId)` is called straight in the composable body. This is a side effect that runs on every recomposition, including discarded ones. It should live in an effect keyed on userId: LaunchedEffect(userId).
+2. `LaunchedEffect(true) { delay(5_000); onClose() }` uses onClose, which can change, so it may call an outdated lambda. Making onClose a key would restart the delay with every new lambda. The right fix is rememberUpdatedState(onClose).
+3. DisposableEffect has no onDispose, so it does not compile, and the observer would never be removed (a leak). onDispose must be the last statement and must call removeObserver.
+4. LaunchedEffect is called inside onClick. It is a composable and cannot be used from a callback. We should use scope.launch with rememberCoroutineScope (send() is a suspend function).
 
 Corrected version:
 
@@ -211,12 +212,12 @@ Corrected version:
 | derivedStateOf | when the read inputs change | none | wrap in remember |
 | snapshotFlow | when collected | collector cancelled | no keys |
 
-Real usage examples (from the SideEffectsLab tasks):
-- LaunchedEffect - splash screen that waits 2 seconds and then calls onTimeout.
-- rememberCoroutineScope - button that shows a snackbar with scope.launch { showSnackbar(...) }.
-- rememberUpdatedState - currentOnTimeout in the splash screen, so the wait does not restart when the parent gives a new lambda.
-- DisposableEffect - lifecycle logger that adds LifecycleEventObserver and removes it in onDispose.
-- SideEffect - passing userType state to the Analytics object after every successful recomposition.
-- produceState - loadNetworkImage(url) with Loading, Success and Error states.
-- derivedStateOf - "scroll to top" button that appears when firstVisibleItemIndex > 0.
-- snapshotFlow - sending one analytics event when the user scrolls past item 0.
+Real examples from the SideEffectsLab tasks:
+- LaunchedEffect: a splash screen that waits 2 seconds and then calls onTimeout.
+- rememberCoroutineScope: a button that shows a snackbar via scope.launch { showSnackbar(...) }.
+- rememberUpdatedState: currentOnTimeout in the splash screen, so the wait does not restart when the parent passes a new lambda.
+- DisposableEffect: a lifecycle logger that adds a LifecycleEventObserver and removes it in onDispose.
+- SideEffect: handing the userType state to the Analytics object after each successful recomposition.
+- produceState: loadNetworkImage(url) with Loading, Success and Error states.
+- derivedStateOf: a "scroll to top" button that appears when firstVisibleItemIndex > 0.
+- snapshotFlow: sending a single analytics event when the user scrolls past item 0.
